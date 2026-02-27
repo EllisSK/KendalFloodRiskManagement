@@ -1,5 +1,7 @@
+from src.estimation.statistical.local import *
+
 def main():
-    print("Hello from kendalfloodriskmanagement!")
+    test_fn()
 
 
 if __name__ == "__main__":
