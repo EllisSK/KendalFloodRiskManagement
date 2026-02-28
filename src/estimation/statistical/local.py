@@ -105,7 +105,7 @@ def create_jackknife_plot(sample, return_period_range):
     fig.update_layout(
         title="GEV Frequency Curve with Jackknife Confidence Intervals",
         xaxis_title="Return Period (Years)",
-        yaxis_title="Annual Maximum Daily Mean Flow (Cummecs)",
+        yaxis_title="Annual Maximum Instantaneous Flow (Cummecs)",
         xaxis_type="log",
         xaxis=dict(
             showgrid=True,
@@ -120,3 +120,18 @@ def create_jackknife_plot(sample, return_period_range):
     )
 
     return fig
+
+def wrtie_jackknife_report(sample, return_period, path):
+    shape, loc, scale = fit_gev_lmom(sample)
+    flow_aep, std_err, margin_of_err, lower_bound, upper_bound = perform_jack_knifing(sample, return_period)
+
+    with open(path, "w") as f:
+        f.write(f"Jack-Knifing Report for {return_period}-year Return Period\n")
+        f.write(f"GEV Shape Parameter: {shape}\n")
+        f.write(f"GEV Location Parameter: {loc}\n")
+        f.write(f"GEV Scale Parameter: {scale}\n")
+        f.write(f"Modelled Flow: {flow_aep} cummecs\n")
+        f.write(f"Standard Error: {std_err} cummecs\n")
+        f.write(f"Margin of Error: {margin_of_err} cummecs\n")
+        f.write(f"Lower Bound: {lower_bound} cummecs\n")
+        f.write(f"Upper Bound: {upper_bound} cummecs")
