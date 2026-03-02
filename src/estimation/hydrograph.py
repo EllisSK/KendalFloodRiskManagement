@@ -62,5 +62,40 @@ def interpolate_ddf_2022(xml_file_path, return_period, duration):
 def calculate_time_to_peak(propwet, dplbar, urbext1990, dpsbar):
     return 1.56 * (propwet ** -1.09) * (dplbar ** 0.6) * ((1 + urbext1990) ** -3.34) * (dpsbar ** -0.28)
 
-def calculate_duration(Tp, SAAR):
-    return int(np.floor(Tp * (1 + SAAR / 1000)))
+def calculate_duration(Tp, SAAR, Dt):
+    target_val = Tp * (1 + SAAR / 1000)
+    
+    ratio = target_val / Dt
+    
+    n = np.round((ratio - 1) / 2)
+    nearest_odd = 2 * n + 1
+    
+    return nearest_odd * Dt
+
+def calculate_design_storm_precipitation(propwet, dplbar, urbext1990, dpsbar, saar, Dt, xml_file_path, return_period, area):
+    Tp = calculate_time_to_peak(propwet, dplbar, urbext1990, dpsbar)
+    
+    duration = calculate_duration(Tp, saar, Dt)
+    
+    rddf = interpolate_ddf_2022(xml_file_path, return_period, duration)
+
+    arf = calculate_arf(area, duration)
+
+    scf = 0.89
+
+    return rddf * arf * scf
+
+def calculate_storm_profile(urbext1990, D, Dt):
+    if urbext1990 < 0.125:
+        a = 0.06
+        b = 1.026
+    else:
+        a = 0.1
+        b = 0.815
+
+    def profile_func(x, a, b):
+        z = x * b
+        return (np.pow((1-a), z))/(1-a)
+    
+def calculate_design_storm():
+    pass
