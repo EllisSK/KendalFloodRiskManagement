@@ -33,7 +33,12 @@ def parse_feh_xml_to_dataframe(xml_file_path):
     
     df_combined = pd.concat([df_desc, df_catch_ddf, df_point_ddf], axis=1)
 
-    return df_combined
+    df_long = df_combined.melt(
+        var_name="Catchment Descriptor", 
+        value_name="Value"
+    )
+
+    return df_long
 
 def interpolate_ddf_2022(xml_file_path, return_period, duration):
     df_parent = pd.read_xml(xml_file_path, xpath=".//CatchmentAverageDDF2022Values")
