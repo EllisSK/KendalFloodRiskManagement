@@ -98,7 +98,7 @@ def calculate_storm_profile(urbext1990, D, Dt):
         x = 2 * np.abs(t - 0.5)
         z = x * b
         
-        intensity = (-b * np.log(a) * np.power(a, z)) / (1 - a)
+        intensity = (b * np.log(a) * np.power(a, z)) / (a - 1)
         return intensity
     
     n_rain_bars = int(D / Dt)
