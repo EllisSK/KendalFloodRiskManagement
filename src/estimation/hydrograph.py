@@ -86,6 +86,7 @@ def calculate_design_storm_precipitation(propwet, dplbar, urbext1990, dpsbar, sa
     return rddf * arf * scf
 
 def calculate_storm_profile(urbext1990, D, Dt):
+    print(urbext1990)
     if urbext1990 < 0.125:
         a = 0.06
         b = 1.026
@@ -93,9 +94,23 @@ def calculate_storm_profile(urbext1990, D, Dt):
         a = 0.1
         b = 0.815
 
-    def profile_func(x, a, b):
+    def intensity_func(t, a, b):
+        x = 2 * np.abs(t - 0.5)
         z = x * b
-        return (np.pow((1-a), z))/(1-a)
+        
+        intensity = (-b * np.log(a) * np.power(a, z)) / (1 - a)
+        return intensity
+    
+    n_rain_bars = int(D / Dt)
+
+    half_step = (Dt / D) / 2.0
+    time_vals = np.linspace(half_step, 1.0 - half_step, n_rain_bars)
+
+    profile = intensity_func(time_vals, a, b)
+
+    profile_sum = sum(profile)
+
+    return profile / profile_sum
     
 def calculate_design_storm():
     pass
