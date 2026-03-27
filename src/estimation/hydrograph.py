@@ -1,7 +1,11 @@
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 
 from scipy.interpolate import RegularGridInterpolator
+from tqdm import tqdm
+
+from .statistical.local import perform_jack_knifing
 
 def calculate_arf(area, duration):
     ln_A = np.log(area)
@@ -207,21 +211,205 @@ def calculate_storm_profile(D, Dt):
     return normalised_profile
 
     
-def calculate_design_storm(xml_file_path):
+def calculate_unit_hyetograph(xml_file_path, return_period, P_provided: float | None = None):
     Dt = 1
 
     df = parse_feh_xml_to_dataframe(xml_file_path)
 
-    Tp = calculate_time_to_peak(df["Value"]["propwet"], df["Value"]["dplbar"], df["Value"]["urbext1990"], df["Value"]["dpsbar"])
+    propwet = df["Value"]["propwet"]
+    dplbar = df["Value"]["dplbar"]
+    urbext1990 = df["Value"]["urbext1990"]
+    dpsbar = df["Value"]["dpsbar"]
+    saar = df["Value"]["saar"]
+    area = df["Value"]["area"]
 
-    D = calculate_duration(Tp, df["Value"]["saar"], Dt)
+    Tp = calculate_time_to_peak(propwet, dplbar, urbext1990, dpsbar)
+
+    D = calculate_duration(Tp, saar, Dt)
 
     profile = calculate_storm_profile(D, Dt)
 
-    rddf = interpolate_ddf_2022(xml_file_path, 100, D)
+    P = calculate_design_storm_precipitation(propwet, dplbar, urbext1990, dpsbar, saar, Dt, xml_file_path, return_period, area)
 
-    arf = calculate_arf(df["Value"]["area"], D)
+    if P_provided:
+        return profile * P_provided
+    else:
+        return profile * P
+    
+def calculate_unit_hydrograph(area, Tp, num_hours=20):
+    Up = 0.65 * area / (3.6 * Tp)
+    TB = 2.52 * Tp
+    
+    uh = np.zeros(num_hours)
+    
+    for h in range(num_hours):
+        if h < Tp:
+            q = (h / Tp) * Up
+        else:
+            q = Up - ((h - Tp) / (TB - Tp)) * Up
+        
+        if q < 0:
+            q = 0
+            
+        uh[h] = q
+        
+    return uh
 
-    scf = 0.89
+def unit_hydrograph_convolution(rainfall, flows, num_hours):
+    total_flow = np.zeros(num_hours)
+    
+    for hour, rain in enumerate(rainfall):
+        total_rain = rain * flows
+        for _ in range(hour):
+            total_rain = np.insert(total_rain, 0, 0)
+            
+        total_flow = total_flow + total_rain[:num_hours]
+        
+    return total_flow
 
-    return profile * arf * scf * rddf
+def calculate_design_storm(xml_file_path, return_period, prop_runoff, P_provided: float | None = None, baseflow=2.0, num_hours=20):
+    df = parse_feh_xml_to_dataframe(xml_file_path)
+    
+    propwet = df["Value"]["propwet"]
+    dplbar = df["Value"]["dplbar"]
+    urbext1990 = df["Value"]["urbext1990"]
+    dpsbar = df["Value"]["dpsbar"]
+    area = df["Value"]["area"]
+    
+    Tp = calculate_time_to_peak(propwet, dplbar, urbext1990, dpsbar)
+    
+    rainfall = calculate_unit_hyetograph(xml_file_path, return_period, P_provided)
+    
+    uh_flows = calculate_unit_hydrograph(area, Tp, num_hours)
+    
+    effective_rainfall = rainfall * prop_runoff
+    
+    storm_flows = unit_hydrograph_convolution(effective_rainfall, uh_flows, num_hours)
+    
+    return storm_flows + baseflow
+
+def perform_sensitivity_analysis(xml_file_path, return_period, baseflow=2.0, num_hours=20):
+    prop_runoffs = [0.6, 0.7, 0.8]
+    P_provs = [80, 100, 120]
+    
+    results = []
+    
+    for pr in prop_runoffs:
+        for p in P_provs:
+            flows = calculate_design_storm(xml_file_path, return_period, pr, P_provided=p, baseflow=baseflow, num_hours=num_hours)
+            peak_flow = np.max(flows)
+            
+            results.append({
+                "prop_runoff": pr,
+                "P_provided": p,
+                "peak_flow": peak_flow
+            })
+            
+    return pd.DataFrame(results)
+
+def create_dual_jackknife_plot(sample, return_period_range, xml_file_path, prop_runoff, baseflow=2.0, num_hours=20):
+    flows = []
+    lower_bounds = []
+    upper_bounds = []
+    uh_peak_flows = []
+
+    return_periods = np.linspace(return_period_range[0], return_period_range[1], 1000)
+
+    for rp in tqdm(return_periods):
+        flow, std_err, moe, lower, upper = perform_jack_knifing(sample, rp)
+        flows.append(flow)
+        lower_bounds.append(lower)
+        upper_bounds.append(upper)
+
+        storm_flows = calculate_design_storm(xml_file_path, rp, prop_runoff, baseflow=baseflow, num_hours=num_hours)
+        uh_peak_flows.append(np.max(storm_flows))
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=return_periods,
+        y=upper_bounds,
+        mode="lines",
+        line=dict(width=0),
+        showlegend=False,
+        hoverinfo="skip"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=return_periods,
+        y=lower_bounds,
+        mode="lines",
+        line=dict(width=0),
+        fill="tonexty",
+        fillcolor="rgba(0, 0, 255, 0.2)",
+        name="95% Confidence Interval"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=return_periods,
+        y=flows,
+        mode="lines",
+        line=dict(color="blue", width=2),
+        marker=dict(size=6),
+        name="GEV Estimate"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=return_periods,
+        y=uh_peak_flows,
+        mode="lines",
+        line=dict(color="red", width=2),
+        name="FEH Unit Hydrograph Estimate"
+    ))
+
+    fig.update_layout(
+        template="presentation",
+        title="GEV vs FEH Unit Hydrograph Frequency Curves",
+        xaxis_title="Return Period (Years)",
+        yaxis_title="Annual Maximum Instantaneous Flow (Cummecs)",
+        xaxis_type="log",
+        xaxis=dict(
+            showgrid=True,
+            gridcolor="lightgrey"
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor="lightgrey"
+        ),
+        plot_bgcolor="white",
+        hovermode="x unified"
+    )
+
+    return fig
+
+def create_feh_heatmap(df):
+    pivot_table = df.pivot(index="P_provided", columns="prop_runoff", values="peak_flow")
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_table.values,
+        x=pivot_table.columns,
+        y=pivot_table.index,
+        colorscale="Blues",
+        texttemplate="%{z:.1f}",
+        colorbar=dict(title="Peak Flow (Cummecs)")
+    ))
+
+    fig.update_layout(
+        template="presentation",
+        title="FEH Sensitivity Analysis Heatmap",
+        xaxis_title="Proportional Runoff",
+        yaxis_title="Design Rainfall (mm)",
+        plot_bgcolor="white",
+        xaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            type="category"
+        ),
+        yaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            type="category"
+        )
+    )
+
+    return fig

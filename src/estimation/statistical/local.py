@@ -103,6 +103,7 @@ def create_jackknife_plot(sample, return_period_range):
     ))
 
     fig.update_layout(
+        template="presentation",
         title="GEV Frequency Curve with Jackknife Confidence Intervals",
         xaxis_title="Return Period (Years)",
         yaxis_title="Annual Maximum Instantaneous Flow (Cummecs)",
